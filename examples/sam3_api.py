@@ -10,6 +10,7 @@ from sam3 import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
 
 from brush import *
+from uuid import uuid4
 
 import xml.etree.ElementTree as ET
 
@@ -107,51 +108,42 @@ def predict():
 
         print("SAM3 LABEL PROMPTS:", labels)
 
-        inference_state = processor.set_image(in_image)
-        processor.reset_all_prompts(inference_state)
+        results = []
+        for label in labels:
+            state = processor.set_image(in_image)
+            processor.reset_all_prompts(state)
+            state = processor.set_text_prompt(state=state, prompt=label)
+            masks = state.get("masks", [])
+            if masks is None or len(masks) == 0:
+                continue
+            for m in masks:
+                try:
+                    m = m.squeeze(0).to(torch.uint8).cpu().numpy()
+                    if m.sum() == 0:
+                        continue
+                    m = m * 255 
+                    rle = mask2rle(m)
+                    results.append({ "id": str(uuid4())[:4], 
+                                    "type": "brushlabels", 
+                                    "from_name": "tag", 
+                                    "to_name": "image", 
+                                    "value": { "format": "rle", "rle": rle, "brushlabels": [label] } 
+                                    })
 
-        inference_state = processor.set_text_prompt(state=inference_state, prompt=labels[0])
-        print(inference_state.keys())
+                except Exception as e:
+                    print("MASK FAILURE:", e)
+                    continue
 
-        masks = inference_state["masks"]
+        if not results:
+            return jsonify({"results": []})
 
-        if len(masks) == 0:
-            print("NOT MASK DETECTED")
-            return jsonify({"result": []})
-        else:
-            print("success", len(masks))
-            print("shape", masks[0].shape)
-
-        from pycocotools import mask as mask_utils
-        
-        # mask: shape (1, 800, 800), dtype=bool, device=cuda
-        mask = inference_state['masks'][0].squeeze(0)          # (800, 800)
-        mask = mask.to(torch.uint8)     # bool -> uint8
-        mask = mask.cpu().numpy()       # to numpy
-        mask = mask * 255
-        rle = mask2rle(mask)
-
-        result = {
-            "result": [
-                {
-                    "id": "sam3_mask",
-                    "type": "brushlabels",
-                    "from_name": "tag",
-                    "to_name": "image",
-                    "value": {
-                    "format": "rle",
-                    "rle": rle,
-                    "brushlabels": ["Swiming Pool"]
-                    }
-                }
-            ],
-            "score": 0.99,
-            "model_version": "sam3-v1"
-        }
-
-        #print("result", result)
-
-        return jsonify({"results": [result]})
+        return jsonify({
+            "results": [{
+                "result": results,
+                "model_version": "sam3",
+                "score": 0.99
+            }]
+        })
 
     finally:
         request_lock.release()
