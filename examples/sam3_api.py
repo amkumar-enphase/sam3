@@ -89,8 +89,6 @@ def predict():
 
         task = payload["tasks"][0]
         image_url = task["data"]["image"]
-
-        # /data/upload/2/filename.jpg  -> real path
         if image_url.startswith("/data/upload"):
             image_path = image_url.replace("/data/upload", LABEL_STUDIO_UPLOAD_DIR)
         else:
